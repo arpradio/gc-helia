@@ -7,7 +7,7 @@ Getting Started
 First, clone the repo
 
 ```
-git clone https://github.com/arpradio/gc-connect.git
+git clone https://github.com/arpradio/gc-helia.git
 cd gc-connect
 ```
 
@@ -44,3 +44,4 @@ npm run start
 ```
 
 The Web Application will now be running! Visit http://localhost:3000 and begin building your dApplication!
+
