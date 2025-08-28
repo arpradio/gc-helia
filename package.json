@@ -3,13 +3,13 @@
   "version": "0.1.0-alpha",
   "private": false,
   "description": "GameChanger Wallet Connector",
-  "homepage": "https://github.com/arpradio/gc-helia",
+  "homepage": "https://github.com/arpradio/gc-wallet-connector",
   "bugs": {
-    "url": "https://github.com/arpradio/gc-helia/issues"
+    "url": "https://github.com/arpradio/gc-wallet-connector/issues"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/arpradio/gc-helia.git"
+    "url": "git+https://github.com/arpradio/gc-wallet-connector.git"
   },
   "license": "MIT",
   "author": "sudoScientist",
@@ -33,7 +33,6 @@
     "blakejs": "^1.2.1",
     "cbor": "^10.0.3",
     "class-variance-authority": "^0.7.1",
-    "helia": "^5.5.1",
     "jose": "^6.0.10",
     "lucide-react": "^0.469.0",
     "next": "^15.3.1",
