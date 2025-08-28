@@ -14,7 +14,7 @@ type NavLink = {
 const navLinks: ReadonlyArray<NavLink> = [
   { href: '/', label: 'Home' },
   { href: '/user', label: 'User' },
-  { href: '/other', label: 'Other' },
+  { href: '/ipfs', label: 'IPFS' },
   { href: '/wallet', label: 'Wallet'}
 ];
 

@@ -1,7 +1,6 @@
-// Updated AppProviders.tsx with improved localStorage synchronization 
 'use client';
 
-import { type FC, type ReactNode, useEffect } from 'react';
+import { type FC, type ReactNode, useEffect, useRef } from 'react';
 import { WalletProvider } from './walletProvider';
 
 type AppProvidersProps = {
@@ -9,49 +8,53 @@ type AppProvidersProps = {
 };
 
 export const AppProviders: FC<AppProvidersProps> = ({ children }): React.ReactElement => {
-  useEffect(() => {
-    const checkLocalStorageCallback = (): void => {
-      const callbackData = localStorage.getItem('gc_wallet_callback');
+  const callbackProcessedRef = useRef(false);
 
-      if (callbackData) {
-        console.log("Detected callback data in localStorage");
+  useEffect(() => {
+    const processCallback = (callbackData: string): void => {
+      if (callbackProcessedRef.current) return;
+      
+      console.log("Processing wallet callback data");
+      callbackProcessedRef.current = true;
+      
+      try {
+        window.postMessage(`gc:${callbackData}`, window.location.origin);
         
-        // Try both methods for maximum compatibility
-        try {
-          // 1. Post message approach
-          window.postMessage(`gc:${callbackData}`, window.location.origin);
-          
-          // 2. Direct event dispatch approach
-          const event = new CustomEvent('walletCallbackReceived', { 
-            detail: { data: callbackData },
-            bubbles: true 
-          });
-          document.dispatchEvent(event);
-        } catch (error) {
-          console.error("Error dispatching wallet callback:", error);
-        }
+        const event = new CustomEvent('walletCallbackReceived', { 
+          detail: { data: callbackData },
+          bubbles: true 
+        });
+        document.dispatchEvent(event);
         
-        // Clear the storage item after a short delay to ensure processing
         setTimeout(() => {
           localStorage.removeItem('gc_wallet_callback');
-        }, 500);
+          callbackProcessedRef.current = false;
+        }, 1000);
+        
+      } catch (error) {
+        console.error("Error processing wallet callback:", error);
+        callbackProcessedRef.current = false;
       }
     };
 
-    // Initial check
-    checkLocalStorageCallback();
+    const checkCallback = (): void => {
+      const callbackData = localStorage.getItem('gc_wallet_callback');
+      if (callbackData && !callbackProcessedRef.current) {
+        processCallback(callbackData);
+      }
+    };
 
-    // Watch for storage changes from other tabs/windows
+    checkCallback();
+
     const handleStorageChange = (e: StorageEvent): void => {
-      if (e.key === 'gc_wallet_callback' && e.newValue) {
-        checkLocalStorageCallback();
+      if (e.key === 'gc_wallet_callback' && e.newValue && !callbackProcessedRef.current) {
+        processCallback(e.newValue);
       }
     };
 
     window.addEventListener('storage', handleStorageChange);
     
-    // Periodic check as extra safety (Firefox sometimes misses storage events)
-    const intervalId = setInterval(checkLocalStorageCallback, 500);
+    const intervalId = setInterval(checkCallback, 1000);
     
     return (): void => {
       window.removeEventListener('storage', handleStorageChange);
@@ -61,9 +64,7 @@ export const AppProviders: FC<AppProvidersProps> = ({ children }): React.ReactEl
 
   return (
     <WalletProvider>
-        {children}
+      {children}
     </WalletProvider>
   );
 };
-
-export default AppProviders;
