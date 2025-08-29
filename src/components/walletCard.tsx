@@ -7,7 +7,7 @@ import { Card, CardFooter } from '@/components/ui/card';
 import { parseAssetMetadata, getIPFSImageUrl } from '@/app/utils/metadataParser';
 
 export interface WalletAssetCardProps {
-  asset: any;
+  asset:  string & { assetId: string; policyId: string; assetName: string; quantity: number; };
   onClick: () => void;
 }
 

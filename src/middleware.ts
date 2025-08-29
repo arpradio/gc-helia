@@ -7,8 +7,8 @@ export const config = {
     '/api/wallet/:path*',
     '/user', // Replace with actual route you wish to protect
     '/user/:path*', // Replace with actual (sub)route you wish to protect
-    '/other', // Replace with actual route you wish to protect
-    '/other/:path*', // Replace with actual (sub)route you wish to protect
+    '/ipfs', // Replace with actual route you wish to protect
+    '/ipfs/:path*', // Replace with actual (sub)route you wish to protect
     '/wallet'
   ],
 };
@@ -27,7 +27,7 @@ export function middleware(request: NextRequest) {
 
   if (
     (currentPath.startsWith('/user') 
-    || currentPath.startsWith('/other')) &&
+    || currentPath.startsWith('/ipfs')) &&
     !walletSession
   ) {
     const redirectPath = request.nextUrl.pathname + request.nextUrl.search;

@@ -5,6 +5,7 @@ import Link from 'next/link';
 import Image from 'next/image';
 import { usePathname } from 'next/navigation';
 import WalletConnectButton from '@/components/Header/walletButton';
+import IPFSPeerManager from "@/components/peer-manager";
 
 type NavLink = {
   readonly href: string;
@@ -84,7 +85,7 @@ const Header: FC = (): React.ReactElement => {
           </nav>
           
           <div className="hidden md:flex flex-col items-end gap-2">
-         
+           <IPFSPeerManager/>
  
             <WalletConnectButton 
               variant="outline" 
