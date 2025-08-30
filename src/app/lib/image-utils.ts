@@ -13,16 +13,23 @@ const isIPFSUrl = (src: string): boolean => {
   );
 };
 
-export const extractImage = async (metadata: any): Promise<string> => {
-  const image = metadata?.image || metadata?.files?.[0]?.src;
+const resolveArrayToString = (src: string | string[]): string => {
+  if (Array.isArray(src)) {
+    return src.join('');
+  }
+  return src;
+};
 
-  if (!image) return '/default.png';
+export const extractImage = async (metadata: any): Promise<string> => {
+  const imageRaw = metadata?.image || metadata?.files?.[0]?.src;
+  if (!imageRaw) return '/default.png';
+
+  const image = resolveArrayToString(imageRaw);
 
   if (typeof image === 'string') {
     if (image.startsWith('data:')) {
       return image;
     }
-
 
     if (ipfsCache.has(image)) {
       return ipfsCache.get(image)!;
@@ -42,40 +49,25 @@ export const extractImage = async (metadata: any): Promise<string> => {
     }
   }
 
-  if (Array.isArray(image)) {
-    const combinedImage = image.join("");
-
-    if (ipfsCache.has(combinedImage)) {
-      return ipfsCache.get(combinedImage)!;
-    }
-
-    try {
-      const url = await getIPFSUrl(combinedImage);
-      ipfsCache.set(combinedImage, url);
-      return url;
-    } catch (error) {
-      console.error('Error getting IPFS URL:', error);
-      return '/default.png';
-    }
-  }
-
   return '/default.png';
 };
 
-export const normalizeImageSrc = async (src: ImageSource): Promise<string> => {
-  if (!src || typeof src !== 'string') return '/default.png';
+export const normalizeImageSrc = async (src: ImageSource | string[]): Promise<string> => {
+  if (!src) return '/default.png';
 
-  if (src.startsWith('data:')) {
-    return src;
+  const normalizedSrc = resolveArrayToString(src);
+
+  if (normalizedSrc.startsWith('data:')) {
+    return normalizedSrc;
   }
 
-  if (ipfsCache.has(src)) {
-    return ipfsCache.get(src)!;
+  if (ipfsCache.has(normalizedSrc)) {
+    return ipfsCache.get(normalizedSrc)!;
   }
 
   try {
-    const url = await getIPFSUrl(src);
-    ipfsCache.set(src, url);
+    const url = await getIPFSUrl(normalizedSrc);
+    ipfsCache.set(normalizedSrc, url);
     return url;
   } catch (error) {
     console.error('Error normalizing image source:', error);
@@ -87,86 +79,63 @@ export const extractImageWithCallback = (
   metadata: any,
   callback: (url: string) => void
 ): string => {
-  const image = metadata?.image || metadata?.files?.[0]?.src;
+  const imageRaw = metadata?.image || metadata?.files?.[0]?.src;
+  if (!imageRaw) return '/default.png';
 
-  if (!image) return '/default.png';
+  const image = resolveArrayToString(imageRaw);
 
-  if (typeof image === 'string') {
-    if (image.startsWith('data:')) {
-      return image;
-    }
-
-    if (ipfsCache.has(image)) {
-      const cachedUrl = ipfsCache.get(image)!;
-      setTimeout(() => callback(cachedUrl), 0);
-      return cachedUrl;
-    }
-
-    const immediateDisplay = isIPFSUrl(image) ?
-      `https://ipfs.io/ipfs/${image.replace('ipfs://', '')}` :
-      '/default.png';
-
-    getIPFSUrl(image)
-      .then(url => {
-        ipfsCache.set(image, url);
-        callback(url);
-      })
-      .catch(error => {
-        console.error('Error getting IPFS URL:', error);
-        callback('/default.png');
-      });
-
-    return immediateDisplay;
+  if (image.startsWith('data:')) {
+    return image;
   }
 
-  if (Array.isArray(image)) {
-    const combinedImage = image.join("");
-
-    if (ipfsCache.has(combinedImage)) {
-      const cachedUrl = ipfsCache.get(combinedImage)!;
-      setTimeout(() => callback(cachedUrl), 0);
-      return cachedUrl;
-    }
-
-    getIPFSUrl(combinedImage)
-      .then(url => {
-        ipfsCache.set(combinedImage, url);
-        callback(url);
-      })
-      .catch(error => {
-        console.error('Error getting IPFS URL:', error);
-        callback('/default.png');
-      });
-
-    return '/default.png';
-  }
-
-  return '/default.png';
-};
-
-export const normalizeImageSrcWithCallback = (
-  src: ImageSource,
-  callback: (url: string) => void
-): string => {
-  if (!src || typeof src !== 'string') return '/default.png';
-
-  if (src.startsWith('data:')) {
-    return src;
-  }
-
-  if (ipfsCache.has(src)) {
-    const cachedUrl = ipfsCache.get(src)!;
+  if (ipfsCache.has(image)) {
+    const cachedUrl = ipfsCache.get(image)!;
     setTimeout(() => callback(cachedUrl), 0);
     return cachedUrl;
   }
 
-  const immediateDisplay = isIPFSUrl(src) ?
-    `https://ipfs.io/ipfs/${src.replace('ipfs://', '')}` :
-    '/default.png';
+  const immediateDisplay = isIPFSUrl(image)
+    ? `https://ipfs.io/ipfs/${image.replace('ipfs://', '')}`
+    : '/default.png';
 
-  getIPFSUrl(src)
+  getIPFSUrl(image)
     .then(url => {
-      ipfsCache.set(src, url);
+      ipfsCache.set(image, url);
+      callback(url);
+    })
+    .catch(error => {
+      console.error('Error getting IPFS URL:', error);
+      callback('/default.png');
+    });
+
+  return immediateDisplay;
+};
+
+export const normalizeImageSrcWithCallback = (
+  src: ImageSource | string[],
+  callback: (url: string) => void
+): string => {
+  if (!src) return '/default.png';
+
+  const normalizedSrc = resolveArrayToString(src);
+
+  if (normalizedSrc.startsWith('data:')) {
+    return normalizedSrc;
+  }
+
+  if (ipfsCache.has(normalizedSrc)) {
+    const cachedUrl = ipfsCache.get(normalizedSrc)!;
+    setTimeout(() => callback(cachedUrl), 0);
+    return cachedUrl;
+  }
+
+  const immediateDisplay = isIPFSUrl(normalizedSrc)
+    ? `https://ipfs.io/ipfs/${normalizedSrc.replace('ipfs://', '')}`
+    : '/default.png';
+
+  getIPFSUrl(normalizedSrc)
+    .then(url => {
+      ipfsCache.set(normalizedSrc, url);
       callback(url);
     })
     .catch(error => {

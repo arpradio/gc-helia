@@ -1,5 +1,7 @@
 'use server'
 
+import { chunkUrl, reconstructUrl, type IPFSSource } from '../app/utils/ipfs-utils';
+
 const PINATA_API_URL = 'https://api.pinata.cloud';
 const IPFS_API_URL = 'http://localhost:5001/api/v0';
 const MAX_FILE_SIZE = 100 * 1024 * 1024;
@@ -68,9 +70,12 @@ export async function uploadToIPFS(formData: FormData) {
     const localResult = await pinToLocalIpfs(file);
 
     if (localResult.success && localResult.cid) {
+      const fullUrl = `ipfs://${localResult.cid}`;
       return {
         success: true,
         cid: localResult.cid,
+        url: fullUrl,
+        urlChunks: chunkUrl(fullUrl),
         size: localResult.size,
         timestamp: new Date().toISOString(),
         source: 'local_ipfs'
@@ -111,9 +116,13 @@ export async function uploadToIPFS(formData: FormData) {
     }
 
     const result: PinataResponse = await response.json();
+    const fullUrl = `ipfs://${result.IpfsHash}`;
+    
     return {
       success: true,
       cid: result.IpfsHash,
+      url: fullUrl,
+      urlChunks: chunkUrl(fullUrl),
       size: result.PinSize,
       timestamp: result.Timestamp,
       source: 'pinata'
@@ -127,52 +136,27 @@ export async function uploadToIPFS(formData: FormData) {
   }
 }
 
-export async function getIPFSUrl(src: unknown): Promise<string> {
-  if (!src || typeof src !== 'string') return '';
-
-  if (src.includes('.ipfs.')) {
-    const match = src.match(/^(https?:\/\/)?([a-zA-Z0-9]+)\.ipfs\./);
-    if (match && match[2]) {
-      return `https://ipfs.io/ipfs/${match[2]}`;
-    }
-  }
-
-  if (/^[a-zA-Z0-9]+\.ipfs\.localhost/.test(src)) {
-    const cid = src.split('.ipfs.localhost')[0];
-    return `https://ipfs.io/ipfs/${cid}`;
-  }
-
-  if (src.startsWith('ipfs://')) {
-    const cid = src.replace('ipfs://', '');
-    return `https://ipfs.io/ipfs/${cid}`;
-  }
-
-  if (/^Qm[1-9A-HJ-NP-Za-km-z]{44,}/.test(src) || /^bafy[a-zA-Z0-9]{44,}/.test(src)) {
-    return `https://ipfs.io/ipfs/${src}`;
-  }
-
-  if (src.startsWith('ar://')) {
-    return `https://permagate.io/${src.replace('ar://', '')}`;
-  }
-
-  return src;
-}
-
 export async function fetchIPFSContent(src: string) {
-  let url = src;
+  const urlData = reconstructUrl(src);
+  
+  if (!urlData.isValid) {
+    throw new Error('Invalid IPFS source provided');
+  }
+
+  const processedSrc = Array.isArray(src) ? src.join('') : src;
   let cid = '';
 
-  if (src.includes('.ipfs.')) {
-    const match = src.match(/^(https?:\/\/)?([a-zA-Z0-9]+)\.ipfs\./);
+  if (processedSrc.includes('.ipfs.')) {
+    const match = processedSrc.match(/^(https?:\/\/)?([a-zA-Z0-9]+)\.ipfs\./);
     if (match && match[2]) {
       cid = match[2];
     }
-  } else if (/^[a-zA-Z0-9]+\.ipfs\.localhost/.test(src)) {
-    cid = src.split('.ipfs.localhost')[0];
-  } else if (src.startsWith('ipfs://')) {
-    cid = src.replace('ipfs://', '');
-  } else if (/^Qm[1-9A-HJ-NP-Za-km-z]{44,}/.test(src) || /^bafy[a-zA-Z0-9]{44,}/.test(src)) {
-    cid = src;
+  } else if (/^[a-zA-Z0-9]+\.ipfs\.localhost/.test(processedSrc)) {
+    cid = processedSrc.split('.ipfs.localhost')[0];
+  } else if (processedSrc.startsWith('ipfs://')) {
+    cid = processedSrc.replace('ipfs://', '');
+  } else if (/^Qm[1-9A-HJ-NP-Za-km-z]{44,}/.test(processedSrc) || /^bafy[a-zA-Z0-9]{44,}/.test(processedSrc)) {
+    cid = processedSrc;
   }
 
   if (cid) {
@@ -186,17 +170,28 @@ export async function fetchIPFSContent(src: string) {
       console.error('Local IPFS fetch failed, falling back to public gateway', error);
     }
 
-    url = `https://ipfs.io/ipfs/${cid}`;
+    const publicUrl = `https://ipfs.io/ipfs/${cid}`;
+    
+    try {
+      const response = await fetch(publicUrl, { cache: 'no-store' });
+      if (response.ok) {
+        return await response.blob();
+      }
+      throw new Error(`Failed to fetch: ${response.status} ${response.statusText}`);
+    } catch (error) {
+      console.error('Public IPFS gateway fetch failed', error);
+      throw error;
+    }
   }
 
   try {
-    const response = await fetch(url, { cache: 'no-store' });
+    const response = await fetch(processedSrc, { cache: 'no-store' });
     if (response.ok) {
       return await response.blob();
     }
     throw new Error(`Failed to fetch: ${response.status} ${response.statusText}`);
   } catch (error) {
-    console.error('IPFS fetch failed completely', error);
+    console.error('Direct URL fetch failed', error);
     throw error;
   }
 }

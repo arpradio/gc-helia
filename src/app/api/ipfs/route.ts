@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from 'next/server';
 import { verifiedFetch } from '@helia/verified-fetch';
 import { extractCidFromIpfsUrl, isLikelyImage } from '@/app/utils/ipfs-utils';
 
-
 interface ErrorResponse {
   error: string;
   details?: string;
@@ -14,7 +13,12 @@ interface SuccessResponse {
   size?: number;
 }
 
-type APIResponse = ErrorResponse | SuccessResponse;
+interface IPFSRequestValidation {
+  cid: string;
+  path?: string;
+}
+
+type RouteResponse = ErrorResponse | SuccessResponse;
 
 const SUPPORTED_IMAGE_TYPES = new Set([
   'image/jpeg',
@@ -31,7 +35,7 @@ const DEFAULT_CACHE_HEADERS = {
   'X-Content-Type-Options': 'nosniff',
 } as const;
 
-async function validateIPFSRequest(searchParams: URLSearchParams): Promise<{ cid: string; path?: string } | { error: string }> {
+async function validateIPFSRequest(searchParams: URLSearchParams): Promise<IPFSRequestValidation | { error: string }> {
   const cidParam = searchParams.get('cid');
   const pathParam = searchParams.get('path') || '';
   
@@ -94,148 +98,131 @@ function determineContentType(response: Response, cid: string, path?: string): s
         return 'image/svg+xml';
       case 'bmp':
         return 'image/bmp';
+      case 'json':
+        return 'application/json';
+      case 'txt':
+        return 'text/plain';
+      case 'html':
+        return 'text/html';
+      case 'css':
+        return 'text/css';
+      case 'js':
+        return 'application/javascript';
       default:
-        break;
+        return 'application/octet-stream';
     }
   }
 
-  return 'application/octet-stream';
+  return isLikelyImage(cid) ? 'image/jpeg' : 'application/octet-stream';
 }
 
-async function handleImageOptimization(
-  response: Response, 
-  contentType: string,
-): Promise<{ data: ArrayBuffer; headers: Record<string, string> }> {
-  const data = await response.arrayBuffer();
-  const size = data.byteLength;
-  
-  const headers = {
-    'Content-Type': contentType,
-    'Content-Length': size.toString(),
-    'Accept-Ranges': 'bytes',
-    ...DEFAULT_CACHE_HEADERS
-  };
-
-
-
-
-  return { data, headers };
+function createErrorResponse(error: string, details?: string, status: number = 400): NextResponse<RouteResponse> {
+  return NextResponse.json(
+    { error, details },
+    { status }
+  );
 }
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
+  const { searchParams } = new URL(request.url);
+
   try {
-    const { searchParams } = new URL(request.url);
     const validation = await validateIPFSRequest(searchParams);
     
     if ('error' in validation) {
-      return NextResponse.json<ErrorResponse>(
-        { error: validation.error },
-        { status: 400 }
-      );
+      return createErrorResponse(validation.error);
     }
 
     const { cid, path } = validation;
+
+    const response = await fetchIPFSContent(cid, path);
+    const contentType = determineContentType(response, cid, path);
     
-    const ipfsResponse = await fetchIPFSContent(cid, path);
-    const contentType = determineContentType(ipfsResponse, cid, path);
-    
-    if (!SUPPORTED_IMAGE_TYPES.has(contentType) && !isLikelyImage(path || cid)) {
-      return NextResponse.json<ErrorResponse>(
-        { error: 'Unsupported content type for image processing' },
-        { status: 415 }
+    const format = searchParams.get('format');
+    if (format === 'json') {
+      return NextResponse.json({
+        success: true,
+        contentType,
+        size: parseInt(response.headers.get('content-length') || '0', 10)
+      });
+    }
+
+    if (!SUPPORTED_IMAGE_TYPES.has(contentType.split(';')[0]) && contentType !== 'application/octet-stream') {
+      return createErrorResponse(
+        'Unsupported content type',
+        `Content type "${contentType}" is not supported`,
+        415
       );
     }
 
-    const { data, headers } = await handleImageOptimization(
-      ipfsResponse,
-      contentType,
-    );
+    const arrayBuffer = await response.arrayBuffer();
+    
+    const headers = new Headers({
+      'Content-Type': contentType,
+      'Content-Length': arrayBuffer.byteLength.toString(),
+      ...DEFAULT_CACHE_HEADERS
+    });
 
-    return new NextResponse(data, {
+    response.headers.forEach((value, key) => {
+      if (key.startsWith('x-ipfs-') || key === 'etag') {
+        headers.set(key, value);
+      }
+    });
+
+    return new NextResponse(arrayBuffer, {
       status: 200,
       headers
     });
 
   } catch (error) {
+    console.error('IPFS GET error:', error);
+    
     const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
     
-    console.error('IPFS API Error:', {
-      message: errorMessage,
-      url: request.url,
-      timestamp: new Date().toISOString()
-    });
-
-    if (errorMessage.includes('timeout') || errorMessage.includes('AbortError')) {
-      return NextResponse.json<ErrorResponse>(
-        { 
-          error: 'Request timeout',
-          details: 'IPFS content retrieval took too long'
-        },
-        { status: 408 }
+    if (errorMessage.includes('timeout')) {
+      return createErrorResponse(
+        'Request timeout',
+        'The IPFS content could not be retrieved within the timeout period',
+        408
       );
     }
 
     if (errorMessage.includes('not found') || errorMessage.includes('404')) {
-      return NextResponse.json<ErrorResponse>(
-        { error: 'Content not found on IPFS' },
-        { status: 404 }
+      return createErrorResponse(
+        'Content not found',
+        'The requested IPFS content could not be found',
+        404
       );
     }
 
-    return NextResponse.json<ErrorResponse>(
-      { 
-        error: 'Failed to retrieve IPFS content',
-        details: process.env.NODE_ENV === 'development' ? errorMessage : undefined
-      },
-      { status: 500 }
+    return createErrorResponse(
+      'IPFS fetch failed',
+      errorMessage,
+      500
     );
   }
 }
 
-export async function HEAD(request: NextRequest): Promise<NextResponse> {
-  try {
-    const { searchParams } = new URL(request.url);
-    const validation = await validateIPFSRequest(searchParams);
-    
-    if ('error' in validation) {
-      return new NextResponse(null, { status: 400 });
-    }
+export async function POST(): Promise<NextResponse> {
+  return createErrorResponse(
+    'Method not implemented',
+    'POST method is not currently supported for this endpoint',
+    501
+  );
+}
 
-    const { cid, path } = validation;
-    const ipfsResponse = await fetchIPFSContent(cid, path);
-    const contentType = determineContentType(ipfsResponse, cid, path);
-    
-    if (!SUPPORTED_IMAGE_TYPES.has(contentType) && !isLikelyImage(path || cid)) {
-      return new NextResponse(null, { status: 415 });
-    }
+export async function PUT(): Promise<NextResponse> {
+  return createErrorResponse(
+    'Method not implemented',
+    'PUT method is not currently supported for this endpoint',
+    501
+  );
+}
 
-    const contentLength = ipfsResponse.headers.get('content-length');
-    
-    const headers: Record<string, string> = {
-      'Content-Type': contentType,
-      ...DEFAULT_CACHE_HEADERS
-    };
-    
-    if (contentLength) {
-      headers['Content-Length'] = contentLength;
-    }
-
-    return new NextResponse(null, {
-      status: 200,
-      headers
-    });
-
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    
-    if (errorMessage.includes('timeout') || errorMessage.includes('AbortError')) {
-      return new NextResponse(null, { status: 408 });
-    }
-
-    if (errorMessage.includes('not found') || errorMessage.includes('404')) {
-      return new NextResponse(null, { status: 404 });
-    }
-
-    return new NextResponse(null, { status: 500 });
-  }
+export async function DELETE(): Promise<NextResponse> {
+  return createErrorResponse(
+    'Method not implemented',
+    'DELETE method is not currently supported for this endpoint',
+    501
+  );
 }
