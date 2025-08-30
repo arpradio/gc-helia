@@ -1,5 +1,5 @@
-import { createHelia, type HeliaInit } from 'helia';
-import { verifiedFetch, type VerifiedFetch } from '@helia/verified-fetch';
+import { createHelia, type Helia } from 'helia';
+import { verifiedFetch } from '@helia/verified-fetch';
 import { createLibp2p, type Libp2pInit } from 'libp2p';
 import { bootstrap } from '@libp2p/bootstrap';
 import { mdns } from '@libp2p/mdns';
@@ -7,13 +7,14 @@ import { noise } from '@chainsafe/libp2p-noise';
 import { yamux } from '@chainsafe/libp2p-yamux';
 import { tcp } from '@libp2p/tcp';
 import { webSockets } from '@libp2p/websockets';
+import { trustlessGateway } from '@helia/block-brokers';
+import { MemoryBlockstore } from 'blockstore-core/memory';
+import { MemoryDatastore } from 'datastore-core/memory';
 import type { Multiaddr } from '@multiformats/multiaddr';
 import { useWallet, type WalletContextType } from '@/app/providers/walletProvider';
 
 const walletContext: WalletContextType = useWallet();
-  const { 
-    isConnected, 
-    } = walletContext;
+const { isConnected } = walletContext;
 
 interface TrustlessGateway {
   id: string;
@@ -54,37 +55,23 @@ interface VerifiedFetchOptions {
   headers?: HeadersInit;
   method?: string;
   body?: BodyInit;
-  onProgress?: (bytes: number) => void;
 }
 
 class HeliaVerifiedFetchManager {
-  private helia?: HeliaInit;
-  private verifiedFetchInstance?: VerifiedFetch;
+  private helia?: Helia;
   private config: PeerManagerConfig;
 
   constructor(config: PeerManagerConfig) {
     this.config = config;
   }
 
-  
-async initialize(): Promise<void> {
-  const libp2pConfig = this.buildLibp2pConfig();
-
-  const heliaConfig = {
-    libp2p: libp2pConfig,
-    blockBrokers: [blockBrokers()] // Ensure this is imported correctly
-  };
-
-  if (this.isConnected) {
-    this.helia = await createHelia(heliaConfig);
-
-    this.verifiedFetchInstance = verifiedFetch({
-      helia: this.helia,
-      gateways: this.getEnabledGateways(),
-      routers: this.getDhtRouters()
-    });
+  async initialize(): Promise<void> {
+    if (isConnected) {
+      const libp2pConfig = this.buildLibp2pConfig();
+      const heliaConfig = this.buildHeliaConfig(libp2pConfig);
+      this.helia = await createHelia(heliaConfig);
+    }
   }
-}
 
   private buildLibp2pConfig(): Libp2pInit {
     const bootstrapAddresses = this.config.bootstrapPeers
@@ -118,15 +105,17 @@ async initialize(): Promise<void> {
         ...(this.config.enableMdns ? [mdns()] : [])
       ],
       connectionManager: {
-        maxConnections: this.config.maxConnections,
-        minConnections: Math.min(5, this.config.maxConnections)
+        maxConnections: this.config.maxConnections
       }
     };
   }
 
-  private buildHeliaConfig(libp2pConfig: Libp2pInit): HeliaInit {
+  private buildHeliaConfig(libp2pConfig: Libp2pInit) {
     return {
       libp2p: libp2pConfig,
+      blockstore: new MemoryBlockstore(),
+      datastore: new MemoryDatastore(),
+      blockBrokers: [trustlessGateway()],
       start: this.config.autoBootstrap
     };
   }
@@ -153,13 +142,9 @@ async initialize(): Promise<void> {
   }
 
   async fetch(
-    resource: string | URL, 
+    resource: string, 
     options: VerifiedFetchOptions = {}
   ): Promise<Response> {
-    if (!this.verifiedFetchInstance) {
-      throw new Error('VerifiedFetch not initialized. Call initialize() first.');
-    }
-
     const controller = new AbortController();
     const timeoutId = setTimeout(
       () => controller.abort(), 
@@ -171,7 +156,7 @@ async initialize(): Promise<void> {
         ? this.combineAbortSignals([options.signal, controller.signal])
         : controller.signal;
 
-      const response = await this.verifiedFetchInstance(resource, {
+      const response = await verifiedFetch(resource, {
         ...options,
         signal: combinedSignal
       });
@@ -190,7 +175,7 @@ async initialize(): Promise<void> {
   }
 
   async fetchWithRetry(
-    resource: string | URL, 
+    resource: string, 
     options: VerifiedFetchOptions = {}
   ): Promise<Response> {
     let lastError: Error | null = null;
@@ -214,7 +199,7 @@ async initialize(): Promise<void> {
   async updatePeerConfig(newConfig: Partial<PeerManagerConfig>): Promise<void> {
     this.config = { ...this.config, ...newConfig };
     
-    if (this.helia && this.verifiedFetchInstance) {
+    if (this.helia) {
       await this.shutdown();
       await this.initialize();
     }
@@ -309,11 +294,10 @@ async initialize(): Promise<void> {
   }
 
   async shutdown(): Promise<void> {
-    if (this.helia && typeof this.helia.stop === 'function') {
+    if (this.helia) {
       await this.helia.stop();
     }
     this.helia = undefined;
-    this.verifiedFetchInstance = undefined;
   }
 }
 
